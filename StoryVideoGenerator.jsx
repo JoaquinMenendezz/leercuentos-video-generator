@@ -61,11 +61,30 @@ export default function StoryVideoGenerator() {
 
   // ── Text helpers ──────────────────────────────────────────────────
 
-  function trim(texto, max) {
-    const ws = texto.trim().split(/\s+/);
-    return ws.length <= max ? texto : ws.slice(0, max).join(' ') + '…';
+  // Respeta saltos de línea del original. Devuelve array de arrays de palabras.
+  function trimToParagraphs(texto, max) {
+    const paras = texto.trim().split(/\n+/).filter(p => p.trim());
+    let count = 0;
+    const result = [];
+    for (const p of paras) {
+      const words = p.trim().split(/\s+/).filter(Boolean);
+      if (count + words.length <= max) {
+        result.push(words);
+        count += words.length;
+      } else {
+        const rem = max - count;
+        if (rem > 0) {
+          const partial = words.slice(0, rem);
+          partial[partial.length - 1] += '…';
+          result.push(partial);
+        }
+        break;
+      }
+    }
+    return result.length ? result : [[]];
   }
 
+  // Word-wrap simple, para títulos.
   function buildLines(ctx, words, maxW) {
     const lines = [];
     let cur = '';
@@ -75,6 +94,37 @@ export default function StoryVideoGenerator() {
       else cur = test;
     }
     if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // Word-wrap inteligente: prefiere cortar en puntuación (. , ; ! ?) antes de
+  // cortar en cualquier palabra. Vuelve a corte normal si no hay puntuación cerca.
+  function buildLinesSmart(ctx, words, maxW) {
+    const lines = [];
+    let start = 0;
+    while (start < words.length) {
+      let end = start;
+      let line = '';
+      while (end < words.length) {
+        const test = line ? `${line} ${words[end]}` : words[end];
+        if (ctx.measureText(test).width > maxW && end > start) break;
+        line = test;
+        end++;
+      }
+      // Si no llegamos al final, buscar última puntuación en ventana del 40%
+      if (end < words.length) {
+        const window = Math.max(1, Math.floor((end - start) * 0.4));
+        for (let i = end - 1; i >= Math.max(start, end - window); i--) {
+          if (/[.!?,:;]$/.test(words[i])) {
+            end = i + 1;
+            line = words.slice(start, end).join(' ');
+            break;
+          }
+        }
+      }
+      if (line) lines.push(line);
+      start = end;
+    }
     return lines;
   }
 
@@ -165,31 +215,48 @@ export default function StoryVideoGenerator() {
     drawBg(ctx, W, H);
     applyTextStyle(ctx, fontSize);
 
-    const words = trim(cuento, maxWords).split(/\s+/).filter(Boolean);
-    const maxW  = W * 0.83;
-    const lh    = fontSize * 1.45;
+    const paras  = trimToParagraphs(cuento, maxWords);
+    const maxW   = W * 0.83;
+    const lh     = fontSize * 1.45;
+    const paraGap = lh * 0.7; // espacio extra entre párrafos
 
     if (modoAnim === 'scroll') {
-      // texto sube desde abajo
-      const lines  = buildLines(ctx, words, maxW);
-      const totalH = lines.length * lh;
-      const dist   = totalH + H;
-      const y0     = H - (t / dur) * dist;
-      lines.forEach((l, i) => {
-        const y = y0 + i * lh;
-        if (y > -lh && y < H + lh) ctx.fillText(l, W / 2, y);
+      // Construir lista plana de items: {text} o {isGap}
+      const items = [];
+      paras.forEach((words, pi) => {
+        buildLinesSmart(ctx, words, maxW).forEach(l => items.push({ text: l }));
+        if (pi < paras.length - 1) items.push({ isGap: true });
       });
+
+      const totalH = items.reduce((s, it) => s + (it.isGap ? paraGap : lh), 0);
+      const dist   = totalH + H;
+      let y        = H - (t / dur) * dist;
+
+      for (const it of items) {
+        if (it.isGap) { y += paraGap; continue; }
+        if (y > -lh && y < H + lh) ctx.fillText(it.text, W / 2, y + lh / 2);
+        y += lh;
+      }
     } else {
-      // líneas aparecen y desaparecen, centradas
-      const lines    = buildLines(ctx, words, maxW);
-      const perPage  = 3;
-      const pages    = Math.ceil(lines.length / perPage);
-      const pd       = dur / pages;
-      const pi       = Math.min(Math.floor(t / pd), pages - 1);
-      const tp       = (t - pi * pd) / pd;
+      // Agrupar en páginas respetando párrafos (salto de párrafo = nueva página)
+      const pages = [];
+      let page    = [];
+      for (const words of paras) {
+        for (const line of buildLinesSmart(ctx, words, maxW)) {
+          page.push(line);
+          if (page.length >= 3) { pages.push(page); page = []; }
+        }
+        // salto de párrafo fuerza nueva página
+        if (page.length > 0) { pages.push(page); page = []; }
+      }
+
+      if (!pages.length) return;
+      const pd = dur / pages.length;
+      const pi = Math.min(Math.floor(t / pd), pages.length - 1);
+      const tp = (t - pi * pd) / pd;
 
       ctx.globalAlpha = fadeAlpha(tp);
-      const chunk  = lines.slice(pi * perPage, (pi + 1) * perPage);
+      const chunk  = pages[pi];
       const blockH = chunk.length * lh;
       const y0     = H / 2 - blockH / 2;
       chunk.forEach((l, i) => ctx.fillText(l, W / 2, y0 + i * lh + lh / 2));
