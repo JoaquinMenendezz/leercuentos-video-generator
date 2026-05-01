@@ -426,7 +426,7 @@ export default function StoryVideoGenerator() {
         error: reject,
       });
       encoder.configure({
-        codec: 'avc1.42001f',
+        codec: 'avc1.640028',  // High Profile Level 4.0 — soporta hasta 2M px (1080×1920 ok)
         width: W, height: H,
         bitrate: 8_000_000,
         framerate: 30,
