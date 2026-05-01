@@ -101,6 +101,7 @@ export default function StoryVideoGenerator() {
 
   const [partes, setPartes]               = useState(1);
   const [generando, setGenerando]         = useState(false);
+  const [formatoActual, setFormatoActual] = useState('');
   const [progreso, setProgreso]           = useState(0);   // 0-100
   const [preview, setPreview]             = useState(false);
 
@@ -365,18 +366,21 @@ export default function StoryVideoGenerator() {
       lineSpacing, modoAnim, velocidad, duracion, maxWords, tarjeta, tarjetaPos,
       nombreCuento, aspectRatio]);
 
-  // ── Video export (WebM — frame-accurate) ──────────────────────────
+  // ── Video export (WebM) ───────────────────────────────────────────
+  // Usa setInterval a exactamente 30fps para evitar el bug de velocidad
+  // que ocurría con requestAnimationFrame (60fps en monitores de 60Hz → video 2× rápido).
+  // Limitación: setInterval se frena en pestañas ocultas — quedarse en la pestaña.
 
-  async function generarWebM(textoSeg, nombreArchivo) {
+  async function generarWebM(textoSeg) {
     const { W, H } = dims;
-    const canvas   = document.createElement('canvas');
+    const canvas = document.createElement('canvas');
     canvas.width = W; canvas.height = H;
-    const ctx      = canvas.getContext('2d');
-    const stream   = canvas.captureStream(0); // manual frame control
-    const track    = stream.getVideoTracks()[0];
+    const ctx    = canvas.getContext('2d');
+    const stream = canvas.captureStream(0);
+    const track  = stream.getVideoTracks()[0];
 
-    const efDur      = duracion / velocidad;
-    const totalDur   = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
+    const efDur       = duracion / velocidad;
+    const totalDur    = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
     const totalFrames = Math.round(totalDur * 30);
 
     return new Promise((resolve, reject) => {
@@ -388,29 +392,32 @@ export default function StoryVideoGenerator() {
       recorder.start();
 
       let frame = 0;
-      const next = () => {
+      const interval = setInterval(() => {
         renderAt(ctx, frame / 30, W, H, textoSeg, totalDur);
         track.requestFrame();
         frame++;
         setProgreso(Math.round((frame / totalFrames) * 100));
-        if (frame < totalFrames) requestAnimationFrame(next);
-        else setTimeout(() => recorder.stop(), 200);
-      };
-      requestAnimationFrame(next);
+        if (frame >= totalFrames) {
+          clearInterval(interval);
+          setTimeout(() => recorder.stop(), 200);
+        }
+      }, 1000 / 30); // exactamente 30fps
     });
   }
 
   // ── Video export (MP4 via WebCodecs + mp4-muxer) ──────────────────
+  // Usa MessageChannel como pump: no se throttlea en pestañas ocultas.
+  // Los timestamps son explícitos → velocidad siempre correcta.
 
-  async function generarMP4(textoSeg, nombreArchivo) {
+  async function generarMP4(textoSeg) {
     const { Muxer, ArrayBufferTarget } = await import('mp4-muxer');
     const { W, H } = dims;
-    const canvas   = document.createElement('canvas');
+    const canvas = document.createElement('canvas');
     canvas.width = W; canvas.height = H;
-    const ctx      = canvas.getContext('2d');
+    const ctx    = canvas.getContext('2d');
 
-    const efDur      = duracion / velocidad;
-    const totalDur   = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
+    const efDur       = duracion / velocidad;
+    const totalDur    = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
     const totalFrames = Math.round(totalDur * 30);
 
     const target = new ArrayBufferTarget();
@@ -426,26 +433,27 @@ export default function StoryVideoGenerator() {
         error: reject,
       });
       encoder.configure({
-        codec: 'avc1.640028',  // High Profile Level 4.0 — soporta hasta 2M px (1080×1920 ok)
+        codec: 'avc1.640028', // High Profile Level 4.0 — hasta 2M px (1080×1920 ok)
         width: W, height: H,
         bitrate: 8_000_000,
         framerate: 30,
       });
 
       let frame = 0;
-      const next = async () => {
+      const ch = new MessageChannel();
+      ch.port1.onmessage = async () => {
         renderAt(ctx, frame / 30, W, H, textoSeg, totalDur);
         const vf = new VideoFrame(canvas, { timestamp: Math.round((frame / 30) * 1_000_000) });
         encoder.encode(vf, { keyFrame: frame % 60 === 0 });
         vf.close();
         frame++;
         setProgreso(Math.round((frame / totalFrames) * 100));
-        if (frame < totalFrames) { requestAnimationFrame(next); return; }
+        if (frame < totalFrames) { ch.port2.postMessage(null); return; }
         await encoder.flush();
         muxer.finalize();
         resolve(new Blob([target.buffer], { type: 'video/mp4' }));
       };
-      requestAnimationFrame(next);
+      ch.port2.postMessage(null);
     });
   }
 
@@ -456,23 +464,30 @@ export default function StoryVideoGenerator() {
     document.body.removeChild(a); URL.revokeObjectURL(url);
   }
 
+  // Timestamp en el nombre para evitar colisiones con archivos existentes
+  function nombreConFecha(base) {
+    const now = new Date();
+    const ts  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;
+    return `${base}_${ts}`;
+  }
+
   const generarVideo = async (formato) => {
     if (!cuento.trim()) { alert('Pegá el cuento primero'); return; }
-    const webCodecsOk = typeof VideoEncoder !== 'undefined';
-    if (formato === 'mp4' && !webCodecsOk) {
+    if (formato === 'mp4' && typeof VideoEncoder === 'undefined') {
       alert('Tu navegador no soporta exportar MP4.\nUsá Chrome o Edge para esta opción.');
       return;
     }
     setGenerando(true);
+    setFormatoActual(formato);
     setProgreso(0);
     try {
       const segs = splitIntoSegments(cuento, partes);
       for (let i = 0; i < segs.length; i++) {
-        const sufijo  = segs.length > 1 ? `_parte${i + 1}` : '';
-        const base    = nombreCuento.replace(/\s+/g, '_') + sufijo;
-        const blob    = formato === 'mp4'
-          ? await generarMP4(segs[i], base)
-          : await generarWebM(segs[i], base);
+        const sufijo = segs.length > 1 ? `_parte${i + 1}` : '';
+        const base   = nombreConFecha(nombreCuento.replace(/\s+/g, '_') + sufijo);
+        const blob   = formato === 'mp4'
+          ? await generarMP4(segs[i])
+          : await generarWebM(segs[i]);
         downloadBlob(blob, `${base}.${formato}`);
         setProgreso(0);
       }
@@ -668,7 +683,7 @@ export default function StoryVideoGenerator() {
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between',
                 fontSize: '0.82rem', color: '#555', marginBottom: 4 }}>
-                <span>Generando video…</span>
+                <span>Generando {formatoActual.toUpperCase()}…</span>
                 <span>{progreso}%</span>
               </div>
               <div style={{ height: 8, background: '#e0e0e0', borderRadius: 4, overflow: 'hidden' }}>
@@ -676,6 +691,13 @@ export default function StoryVideoGenerator() {
                   background: 'linear-gradient(90deg, #667eea, #764ba2)',
                   transition: 'width 0.1s', borderRadius: 4 }} />
               </div>
+              {formatoActual === 'webm' && (
+                <div style={{ marginTop: 6, padding: '6px 10px', background: '#fff8e1',
+                  border: '1px solid #ffe082', borderRadius: 6,
+                  fontSize: '0.78rem', color: '#7a5f00' }}>
+                  No cambies de pestaña mientras se genera el WebM.
+                </div>
+              )}
             </div>
           )}
 
