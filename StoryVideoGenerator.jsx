@@ -81,9 +81,12 @@ export default function StoryVideoGenerator() {
   const saved = loadConfig();
 
   const [cuento, setCuento]               = useState('');
+  const [textoExtra, setTextoExtra]       = useState('');
+  const [verTexto, setVerTexto]           = useState(false);
   const [nombreCuento, setNombreCuento]   = useState('Cuento sin título');
   const [autor, setAutor]                 = useState(saved.autor ?? '');
   const [llamadaAccion, setLlamadaAccion] = useState(saved.llamadaAccion ?? 'Leé el cuento completo en leercuentos.online');
+  const [mostrarCTA, setMostrarCTA]       = useState(saved.mostrarCTA ?? true);
   const [maxWords, setMaxWords]           = useState(saved.maxWords ?? 250);
   const [duracion, setDuracion]           = useState(saved.duracion ?? 30);
   const [aspectRatio, setAspectRatio]     = useState(saved.aspectRatio ?? '9:16');
@@ -114,10 +117,10 @@ export default function StoryVideoGenerator() {
 
   // Persistir configuración (excluye texto del cuento e imagen)
   useEffect(() => {
-    saveConfig({ llamadaAccion, autor, maxWords, duracion, aspectRatio,
+    saveConfig({ llamadaAccion, mostrarCTA, autor, maxWords, duracion, aspectRatio,
       fondo, colorTexto, fontSize, fontFamily, lineSpacing,
       modoAnim, velocidad, tarjeta, tarjetaPos });
-  }, [llamadaAccion, autor, maxWords, duracion, aspectRatio, fondo, colorTexto,
+  }, [llamadaAccion, mostrarCTA, autor, maxWords, duracion, aspectRatio, fondo, colorTexto,
       fontSize, fontFamily, lineSpacing, modoAnim, velocidad, tarjeta, tarjetaPos]);
 
   // ── Dimensiones según aspecto ─────────────────────────────────────
@@ -316,10 +319,14 @@ export default function StoryVideoGenerator() {
 
   // ── Content frame ─────────────────────────────────────────────────
 
-  function drawContent(ctx, t, dur, W, H, textoSeg) {
+  function drawContent(ctx, t, dur, W, H, textoSeg, extraSeg) {
     drawBg(ctx, W, H);
     applyTextStyle(ctx, fontSize);
-    const paras   = trimToParagraphs(textoSeg || cuento, maxWords);
+    const mainParas  = trimToParagraphs(textoSeg || cuento, maxWords);
+    const extraParas = (extraSeg || textoExtra).trim()
+      ? trimToParagraphs((extraSeg || textoExtra), 99999)
+      : [];
+    const paras = [...mainParas, ...extraParas];
     const maxW    = W * 0.83;
     const lh      = fontSize * lineSpacing;
     const paraGap = lh * 0.7;
@@ -367,17 +374,18 @@ export default function StoryVideoGenerator() {
 
   function calcDurs() {
     const efDur    = duracion / velocidad;
-    const titleDur = tarjeta ? TITLE_CARD_SECS : 0;
-    const totalDur = efDur + titleDur + CTA_CARD_SECS;
-    return { efDur, titleDur, totalDur };
+    const titleDur = tarjeta   ? TITLE_CARD_SECS : 0;
+    const ctaDur   = mostrarCTA ? CTA_CARD_SECS   : 0;
+    const totalDur = efDur + titleDur + ctaDur;
+    return { efDur, titleDur, ctaDur, totalDur };
   }
 
   function renderAt(ctx, elapsed, W, H, textoSeg, totalDur) {
-    const { efDur, titleDur } = calcDurs();
-    const ctaStart = efDur + titleDur; // CTA siempre al final
+    const { efDur, titleDur, ctaDur } = calcDurs();
+    const ctaStart = efDur + titleDur;
 
-    if (elapsed >= ctaStart) {
-      drawCTACard(ctx, (elapsed - ctaStart) / CTA_CARD_SECS, W, H);
+    if (mostrarCTA && elapsed >= ctaStart) {
+      drawCTACard(ctx, (elapsed - ctaStart) / ctaDur, W, H);
     } else if (tarjeta && tarjetaPos === 'inicio') {
       if (elapsed < titleDur) drawTitleCard(ctx, elapsed / titleDur, W, H);
       else drawContent(ctx, Math.min(elapsed - titleDur, efDur), efDur, W, H, textoSeg);
@@ -414,7 +422,7 @@ export default function StoryVideoGenerator() {
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [preview, cuento, fondo, imagenCargada, colorTexto, fontSize, fontFamily,
       lineSpacing, modoAnim, velocidad, duracion, maxWords, tarjeta, tarjetaPos,
-      nombreCuento, autor, llamadaAccion, aspectRatio]);
+      nombreCuento, autor, llamadaAccion, mostrarCTA, textoExtra, aspectRatio]);
 
   // ── Video export (WebM) ───────────────────────────────────────────
   // Usa setInterval a exactamente 30fps para evitar el bug de velocidad
@@ -625,9 +633,46 @@ export default function StoryVideoGenerator() {
               placeholder="Pegá el texto completo del cuento aquí…" style={s.ta} />
           </Row>
 
+          <Row label="Texto extra al final del video (opcional, sin límite de palabras)">
+            <textarea value={textoExtra} onChange={e => setTextoExtra(e.target.value)}
+              placeholder={'ej: Seguí leyendo en leercuentos.online\n¡Guardalo y compartilo!'}
+              style={{ ...s.ta, minHeight: 70 }} />
+            <small style={s.sm}>Aparece al final del contenido, antes de la tarjeta CTA</small>
+          </Row>
+
           <div style={s.g2}>
-            <Row label="Máx. palabras">
+            <Row label="Máx. palabras del cuento">
               <NumInput value={maxWords} onChange={setMaxWords} min={50} max={1000} fallback={250} style={s.inp} />
+              {(() => {
+                const total  = cuento.trim().split(/\s+/).filter(Boolean).length;
+                const usadas = Math.min(total, maxWords);
+                const color  = usadas < total ? '#e67e22' : '#27ae60';
+                return (
+                  <div style={{ marginTop: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <small style={{ fontSize: '0.76rem', color }}>
+                      {usadas === total
+                        ? `✓ Todo el texto entra (${total} palabras)`
+                        : `${usadas} de ${total} palabras — se corta`}
+                    </small>
+                    {cuento.trim() && (
+                      <button onClick={() => setVerTexto(v => !v)}
+                        style={{ fontSize: '0.72rem', color: '#667eea', background: 'none',
+                          border: 'none', cursor: 'pointer', padding: '0 2px', textDecoration: 'underline' }}>
+                        {verTexto ? 'Ocultar' : 'Ver texto del video'}
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+              {verTexto && cuento.trim() && (
+                <div style={{ marginTop: 6, padding: '10px 12px', background: '#f8f9ff',
+                  border: '1px solid #dde3ff', borderRadius: 6, fontSize: '0.8rem',
+                  color: '#333', maxHeight: 180, overflowY: 'auto',
+                  whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                  {trimToParagraphs(cuento, maxWords).map(ws => ws.join(' ')).join('\n\n')}
+                  {textoExtra.trim() ? '\n\n' + textoExtra : ''}
+                </div>
+              )}
             </Row>
             <Row label="Duración (seg)">
               <NumInput value={duracion} onChange={setDuracion} min={15} max={90} fallback={30} style={s.inp} />
@@ -730,9 +775,19 @@ export default function StoryVideoGenerator() {
             )}
           </Row>
 
-          <Row label="Llamada a acción (aparece al final del video)">
-            <input value={llamadaAccion} onChange={e => setLlamadaAccion(e.target.value)} style={s.inp} />
-            <small style={s.sm}>También usala como descripción del post en Instagram</small>
+          <Row label="Tarjeta final (llamada a acción)">
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center',
+              cursor: 'pointer', userSelect: 'none', fontSize: '0.9rem', marginBottom: 8 }}>
+              <input type="checkbox" checked={mostrarCTA}
+                onChange={e => setMostrarCTA(e.target.checked)} />
+              Mostrar tarjeta CTA al final ({CTA_CARD_SECS} seg)
+            </label>
+            {mostrarCTA && (
+              <>
+                <input value={llamadaAccion} onChange={e => setLlamadaAccion(e.target.value)} style={s.inp} />
+                <small style={s.sm}>También usala como descripción del post en Instagram</small>
+              </>
+            )}
           </Row>
 
           {/* Barra de progreso */}
