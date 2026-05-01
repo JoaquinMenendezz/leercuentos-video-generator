@@ -103,6 +103,7 @@ export default function StoryVideoGenerator() {
   const [generando, setGenerando]         = useState(false);
   const [formatoActual, setFormatoActual] = useState('');
   const [progreso, setProgreso]           = useState(0);   // 0-100
+  const [finalizando, setFinalizando]     = useState(false);
   const [preview, setPreview]             = useState(false);
 
   const previewRef = useRef(null);
@@ -449,8 +450,10 @@ export default function StoryVideoGenerator() {
         frame++;
         setProgreso(Math.round((frame / totalFrames) * 100));
         if (frame < totalFrames) { ch.port2.postMessage(null); return; }
+        setFinalizando(true);
         await encoder.flush();
         muxer.finalize();
+        setFinalizando(false);
         resolve(new Blob([target.buffer], { type: 'video/mp4' }));
       };
       ch.port2.postMessage(null);
@@ -683,13 +686,20 @@ export default function StoryVideoGenerator() {
             <div style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between',
                 fontSize: '0.82rem', color: '#555', marginBottom: 4 }}>
-                <span>Generando {formatoActual.toUpperCase()}…</span>
-                <span>{progreso}%</span>
+                <span>
+                  {finalizando
+                    ? 'Finalizando archivo… (puede demorar)'
+                    : `Generando ${formatoActual.toUpperCase()}…`}
+                </span>
+                <span>{finalizando ? '⏳' : `${progreso}%`}</span>
               </div>
               <div style={{ height: 8, background: '#e0e0e0', borderRadius: 4, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${progreso}%`,
-                  background: 'linear-gradient(90deg, #667eea, #764ba2)',
-                  transition: 'width 0.1s', borderRadius: 4 }} />
+                <div style={{ height: '100%', width: finalizando ? '100%' : `${progreso}%`,
+                  background: finalizando
+                    ? 'linear-gradient(90deg, #11998e, #38ef7d)'
+                    : 'linear-gradient(90deg, #667eea, #764ba2)',
+                  transition: 'width 0.1s', borderRadius: 4,
+                  animation: finalizando ? 'pulse 1s ease-in-out infinite alternate' : 'none' }} />
               </div>
               {formatoActual === 'webm' && (
                 <div style={{ marginTop: 6, padding: '6px 10px', background: '#fff8e1',
