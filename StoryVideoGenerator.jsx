@@ -556,20 +556,17 @@ export default function StoryVideoGenerator() {
 
           <div style={s.g2}>
             <Row label="Máx. palabras">
-              <input type="number" min="50" max="1000" value={maxWords}
-                onChange={e => setMaxWords(Math.max(50, +e.target.value || 250))} style={s.inp} />
+              <NumInput value={maxWords} onChange={setMaxWords} min={50} max={1000} fallback={250} style={s.inp} />
             </Row>
             <Row label="Duración (seg)">
-              <input type="number" min="15" max="90" value={duracion}
-                onChange={e => setDuracion(Math.max(15, +e.target.value || 30))} style={s.inp} />
+              <NumInput value={duracion} onChange={setDuracion} min={15} max={90} fallback={30} style={s.inp} />
               <small style={s.sm}>15–90 seg (sin tarjeta)</small>
             </Row>
           </div>
 
           <div style={s.g2}>
             <Row label="Partes del cuento">
-              <input type="number" min="1" max="10" value={partes}
-                onChange={e => setPartes(Math.max(1, Math.min(10, +e.target.value || 1)))} style={s.inp} />
+              <NumInput value={partes} onChange={setPartes} min={1} max={10} fallback={1} style={s.inp} />
               <small style={s.sm}>Genera N archivos separados</small>
             </Row>
             <Row label="Formato de video">
@@ -736,6 +733,24 @@ function Row({ label, children }) {
 
 function Divider() {
   return <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: '18px 0' }} />;
+}
+
+function NumInput({ value, onChange, min, max, fallback, style }) {
+  const [draft, setDraft] = React.useState(String(value));
+  React.useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      type="number"
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        const v = Math.min(max, Math.max(min, parseInt(draft) || fallback));
+        onChange(v);
+        setDraft(String(v));
+      }}
+      style={style}
+    />
+  );
 }
 
 function TogBtn({ children, active, onClick, first, last }) {
