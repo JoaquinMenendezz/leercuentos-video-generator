@@ -664,15 +664,51 @@ export default function StoryVideoGenerator() {
                   </div>
                 );
               })()}
-              {verTexto && cuento.trim() && (
-                <div style={{ marginTop: 6, padding: '10px 12px', background: '#f8f9ff',
-                  border: '1px solid #dde3ff', borderRadius: 6, fontSize: '0.8rem',
-                  color: '#333', maxHeight: 180, overflowY: 'auto',
-                  whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                  {trimToParagraphs(cuento, maxWords).map(ws => ws.join(' ')).join('\n\n')}
-                  {textoExtra.trim() ? '\n\n' + textoExtra : ''}
-                </div>
-              )}
+              {verTexto && cuento.trim() && (() => {
+                const paras   = cuento.trim().split(/\n+/).filter(p => p.trim());
+                const totalW  = paras.flatMap(p => p.trim().split(/\s+/).filter(Boolean)).length;
+                let wordIdx   = 0;
+                return (
+                  <div style={{ marginTop: 6, padding: '10px 12px', background: '#f8f9ff',
+                    border: '1px solid #dde3ff', borderRadius: 6, fontSize: '0.8rem',
+                    maxHeight: 260, overflowY: 'auto', lineHeight: 1.8 }}>
+                    {paras.map((para, pi) => {
+                      const words = para.trim().split(/\s+/).filter(Boolean);
+                      return (
+                        <p key={pi} style={{ margin: pi > 0 ? '6px 0 0' : 0 }}>
+                          {words.map((w, wi) => {
+                            wordIdx++;
+                            const cur     = wordIdx;
+                            const over    = cur > maxWords;
+                            const cutHere = cur === maxWords && totalW > maxWords;
+                            return (
+                              <React.Fragment key={wi}>
+                                <span style={{ color: over ? '#bbb' : '#222' }}>{w} </span>
+                                {cutHere && (
+                                  <span style={{ display: 'inline-block', background: '#fff3cd',
+                                    color: '#856404', fontSize: '0.68em', fontWeight: 700,
+                                    padding: '1px 6px', borderRadius: 3, margin: '0 4px',
+                                    border: '1px solid #ffc107', verticalAlign: 'middle' }}>
+                                    ✂ corta acá
+                                  </span>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </p>
+                      );
+                    })}
+                    {textoExtra.trim() && (
+                      <p style={{ margin: '8px 0 0', paddingTop: 8,
+                        borderTop: '1px dashed #ccc', color: '#555' }}>
+                        <span style={{ fontSize: '0.7em', color: '#999',
+                          display: 'block', marginBottom: 4 }}>— texto extra —</span>
+                        {textoExtra}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </Row>
             <Row label="Duración (seg)">
               <NumInput value={duracion} onChange={setDuracion} min={15} max={90} fallback={30} style={s.inp} />
