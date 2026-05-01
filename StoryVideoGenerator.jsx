@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 const TITLE_CARD_SECS = 2.5;
-const FADE_SECS       = 0.4; // fade in/out al inicio y final del video
+const CTA_CARD_SECS   = 3.0;
+const FADE_SECS       = 0.4;
 
 const FONTS = [
   { label: 'Georgia (elegante)',             value: 'Georgia, serif' },
@@ -81,6 +82,7 @@ export default function StoryVideoGenerator() {
 
   const [cuento, setCuento]               = useState('');
   const [nombreCuento, setNombreCuento]   = useState('Cuento sin título');
+  const [autor, setAutor]                 = useState(saved.autor ?? '');
   const [llamadaAccion, setLlamadaAccion] = useState(saved.llamadaAccion ?? 'Leé el cuento completo en leercuentos.online');
   const [maxWords, setMaxWords]           = useState(saved.maxWords ?? 250);
   const [duracion, setDuracion]           = useState(saved.duracion ?? 30);
@@ -112,10 +114,10 @@ export default function StoryVideoGenerator() {
 
   // Persistir configuración (excluye texto del cuento e imagen)
   useEffect(() => {
-    saveConfig({ llamadaAccion, maxWords, duracion, aspectRatio,
+    saveConfig({ llamadaAccion, autor, maxWords, duracion, aspectRatio,
       fondo, colorTexto, fontSize, fontFamily, lineSpacing,
       modoAnim, velocidad, tarjeta, tarjetaPos });
-  }, [llamadaAccion, maxWords, duracion, aspectRatio, fondo, colorTexto,
+  }, [llamadaAccion, autor, maxWords, duracion, aspectRatio, fondo, colorTexto,
       fontSize, fontFamily, lineSpacing, modoAnim, velocidad, tarjeta, tarjetaPos]);
 
   // ── Dimensiones según aspecto ─────────────────────────────────────
@@ -260,16 +262,54 @@ export default function StoryVideoGenerator() {
     const titleSize = Math.min(fontSize + 24, 120);
     applyTextStyle(ctx, titleSize);
     ctx.globalAlpha = fadeAlpha(progress);
+
     const words = (label || nombreCuento).split(/\s+/);
     const lines = buildLines(ctx, words, W * 0.78);
     const lh    = titleSize * 1.4;
     const block = lines.length * lh;
+
+    // Centrar verticalmente considerando autor y sitio debajo
+    const hasAutor  = autor.trim().length > 0;
+    const extraRows = hasAutor ? 2 : 1; // autor + sitio, o solo sitio
+    const totalBlock = block + lh * extraRows;
+    const y0 = H / 2 - totalBlock / 2;
+
+    lines.forEach((l, i) => ctx.fillText(l, W / 2, y0 + i * lh + lh / 2));
+
+    clearShadow(ctx);
+    let nextY = y0 + block + lh * 0.3;
+
+    if (hasAutor) {
+      ctx.font      = `italic ${Math.round(fontSize * 0.58)}px ${fontFamily}`;
+      ctx.fillStyle = 'rgba(255,255,255,0.88)';
+      ctx.fillText(autor, W / 2, nextY + lh * 0.5);
+      nextY += lh * 0.9;
+    }
+
+    ctx.font      = `${Math.round(fontSize * 0.48)}px ${fontFamily}`;
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.fillText('leercuentos.online', W / 2, nextY + lh * 0.4);
+
+    ctx.globalAlpha = 1;
+    clearShadow(ctx);
+  }
+
+  // ── CTA card (siempre al final) ───────────────────────────────────
+
+  function drawCTACard(ctx, progress, W, H) {
+    drawBg(ctx, W, H);
+    drawEdgeFade(ctx, W, H);
+    ctx.globalAlpha = fadeAlpha(progress);
+
+    const ctaSize = Math.round(fontSize * 0.82);
+    applyTextStyle(ctx, ctaSize);
+    const words = llamadaAccion.trim().split(/\s+/).filter(Boolean);
+    const lines = buildLines(ctx, words, W * 0.78);
+    const lh    = ctaSize * 1.5;
+    const block = lines.length * lh;
     const y0    = H / 2 - block / 2;
     lines.forEach((l, i) => ctx.fillText(l, W / 2, y0 + i * lh + lh / 2));
-    clearShadow(ctx);
-    ctx.font      = `${Math.round(fontSize * 0.55)}px ${fontFamily}`;
-    ctx.fillStyle = 'rgba(255,255,255,0.82)';
-    ctx.fillText('leercuentos.online', W / 2, y0 + block + lh * 0.9);
+
     ctx.globalAlpha = 1;
     clearShadow(ctx);
   }
@@ -323,12 +363,22 @@ export default function StoryVideoGenerator() {
   }
 
   // ── Render dispatcher ─────────────────────────────────────────────
+  // Orden: [TitleCard inicio?] → Contenido → [TitleCard fin?] → CTA
 
-  function renderAt(ctx, elapsed, W, H, textoSeg, totalDur) {
+  function calcDurs() {
     const efDur    = duracion / velocidad;
     const titleDur = tarjeta ? TITLE_CARD_SECS : 0;
+    const totalDur = efDur + titleDur + CTA_CARD_SECS;
+    return { efDur, titleDur, totalDur };
+  }
 
-    if (tarjeta && tarjetaPos === 'inicio') {
+  function renderAt(ctx, elapsed, W, H, textoSeg, totalDur) {
+    const { efDur, titleDur } = calcDurs();
+    const ctaStart = efDur + titleDur; // CTA siempre al final
+
+    if (elapsed >= ctaStart) {
+      drawCTACard(ctx, (elapsed - ctaStart) / CTA_CARD_SECS, W, H);
+    } else if (tarjeta && tarjetaPos === 'inicio') {
       if (elapsed < titleDur) drawTitleCard(ctx, elapsed / titleDur, W, H);
       else drawContent(ctx, Math.min(elapsed - titleDur, efDur), efDur, W, H, textoSeg);
     } else if (tarjeta && tarjetaPos === 'fin') {
@@ -350,8 +400,7 @@ export default function StoryVideoGenerator() {
     const ctx   = canvas.getContext('2d');
     const { W, H } = dims;
     const scale = canvas.width / W;
-    const efDur = duracion / velocidad;
-    const total = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
+    const { totalDur: total } = calcDurs();
     const t0    = Date.now();
 
     const tick = () => {
@@ -365,7 +414,7 @@ export default function StoryVideoGenerator() {
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [preview, cuento, fondo, imagenCargada, colorTexto, fontSize, fontFamily,
       lineSpacing, modoAnim, velocidad, duracion, maxWords, tarjeta, tarjetaPos,
-      nombreCuento, aspectRatio]);
+      nombreCuento, autor, llamadaAccion, aspectRatio]);
 
   // ── Video export (WebM) ───────────────────────────────────────────
   // Usa setInterval a exactamente 30fps para evitar el bug de velocidad
@@ -380,9 +429,8 @@ export default function StoryVideoGenerator() {
     const stream = canvas.captureStream(0);
     const track  = stream.getVideoTracks()[0];
 
-    const efDur       = duracion / velocidad;
-    const totalDur    = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
-    const totalFrames = Math.round(totalDur * 30);
+    const { totalDur } = calcDurs();
+    const totalFrames  = Math.round(totalDur * 30);
 
     return new Promise((resolve, reject) => {
       const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
@@ -417,9 +465,8 @@ export default function StoryVideoGenerator() {
     canvas.width = W; canvas.height = H;
     const ctx    = canvas.getContext('2d');
 
-    const efDur       = duracion / velocidad;
-    const totalDur    = efDur + (tarjeta ? TITLE_CARD_SECS : 0);
-    const totalFrames = Math.round(totalDur * 30);
+    const { totalDur } = calcDurs();
+    const totalFrames  = Math.round(totalDur * 30);
 
     const target = new ArrayBufferTarget();
     const muxer  = new Muxer({
@@ -562,10 +609,16 @@ export default function StoryVideoGenerator() {
 
           <Divider />
 
-          <Row label="Nombre del cuento">
-            <input value={nombreCuento} onChange={e => setNombreCuento(e.target.value)}
-              placeholder="ej: La Casa en el Árbol" style={s.inp} />
-          </Row>
+          <div style={s.g2}>
+            <Row label="Nombre del cuento">
+              <input value={nombreCuento} onChange={e => setNombreCuento(e.target.value)}
+                placeholder="ej: La Casa en el Árbol" style={s.inp} />
+            </Row>
+            <Row label="Autor (opcional)">
+              <input value={autor} onChange={e => setAutor(e.target.value)}
+                placeholder="ej: Joaquin Menendez" style={s.inp} />
+            </Row>
+          </div>
 
           <Row label={`Texto del cuento (${wc} palabras)`}>
             <textarea value={cuento} onChange={e => setCuento(e.target.value)}
@@ -677,8 +730,9 @@ export default function StoryVideoGenerator() {
             )}
           </Row>
 
-          <Row label="Llamada a acción (descripción del post)">
+          <Row label="Llamada a acción (aparece al final del video)">
             <input value={llamadaAccion} onChange={e => setLlamadaAccion(e.target.value)} style={s.inp} />
+            <small style={s.sm}>También usala como descripción del post en Instagram</small>
           </Row>
 
           {/* Barra de progreso */}
